@@ -21,14 +21,19 @@ template concatenate(a...)
 template toFloat(alias a)
 {
     enum toFloat = cast(float) a;
-} 
+}
+
+template toUByte(alias a)
+{
+    enum toUByte = cast(ubyte) a;
+}
 
 auto vector(A...)(A a)
 {
     alias Vector!(A[0][A.length]) V;
     V r;
     foreach(i,_; A)
-        (cast(A[0]*) &r)[i] = a[i];
+        (cast(A[0]*) &r)[i] = cast(A[0]) a[i];
     
     return r;
 }
@@ -106,32 +111,28 @@ void main()
     {
         auto v = vector(1f, 2, 3, 4);
         auto x = vector(5f, 5, 5, 5);
-        v = setX(v, x);
-        assert(equal(v, vector(5f, 2, 3, 4)));
+        assert(equal(setX(v, x), vector(5f, 2, 3, 4)));
     });
     
     test!((_)
     {
         auto v = vector(1f, 2, 3, 4);
         auto y = vector(5f, 5, 5, 5);
-        v = setY(v, y);
-        assert(equal(v, vector(1f, 5, 3, 4)));
+        assert(equal(setY(v, y), vector(1f, 5, 3, 4)));
     });
 
     test!((_)
     {
         auto v = vector(1f, 2, 3, 4);
         auto z = vector(5f, 5, 5, 5);
-        v = setZ(v, z);
-        assert(equal(v, vector(1f, 2, 5, 4)));
+        assert(equal(setZ(v, z), vector(1f, 2, 5, 4)));
     });
 
     test!((_)
     {
         auto v = vector(1f, 2, 3, 4);
         auto w = vector(5f, 5, 5, 5);
-        v = setW(v, w);
-        assert(equal(v, vector(1f, 2, 3, 5)));
+        assert(equal(setW(v, w), vector(1f, 2, 3, 5)));
     });
     
     test!((_)
@@ -141,11 +142,28 @@ void main()
             alias TypeTuple!(i & 3, (i >> 2) & 3, (i >> 4) & 3, (i >> 6) & 3) e;
             auto v = vector(0f, 1, 2, 3);
             v = swizzle!(concatenate!e)(v);
-            writeln(v.array);
             assert(equal(v, vector(staticMap!(toFloat, e)))); 
         } 
     });
 
+    test!((_)
+    {
+        auto v = vector(staticMap!(toUByte, staticIota!16));
+        auto mask = vector(
+            cast(ubyte) 10, 4, 0, 1, 2, 11, 3, 6, 7, 8, 2, 9, 12, 6, 14, 15); 
+
+        v = permute!(SIMDVer.SSE3)(v, mask);
+        assert(equal(v, mask));
+    });
+
+    test!((_)
+    {
+        auto v1 = vector(0f, 1, 2, 3);
+        auto v2 = vector(4f, 5, 6, 7);
+        assert(equal(interleaveLow(v1, v2), vector(0f, 4, 1, 5))); 
+        assert(equal(interleaveHigh(v1, v2), vector(2f, 6, 3, 7))); 
+    });
+    
     test!((_)
     {
     });
