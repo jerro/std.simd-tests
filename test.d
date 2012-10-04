@@ -1,4 +1,4 @@
-import std.stdio, std.traits, std.math;
+import std.stdio, std.traits, std.math, std.conv, std.typetuple;
 import std.simd;
 import core.simd;
 
@@ -9,6 +9,19 @@ template staticIota(size_t n, r...)
     else 
         alias staticIota!(n - 1, n - 1, r) staticIota;
 }
+
+template concatenate(a...)
+{
+    static if(a.length == 0)
+        enum concatenate = "";
+    else 
+        enum concatenate = to!string(a[0]) ~ concatenate!(a[1 .. $]);
+}
+
+template toFloat(alias a)
+{
+    enum toFloat = cast(float) a;
+} 
 
 auto vector(A...)(A a)
 {
@@ -80,15 +93,15 @@ void main()
         storeScalar(v, &a);
         assert(equal(a, 1f));
     });
-    
+
     test!((_)
     {
         auto v = vector(1f, 2, 3, 4);
-        float[2] a;
+        float[5] a;
         storeUnaligned(v, &a[1]);
         assert(equal(a[1], 1f));
     });
-    
+
     test!((_)
     {
         auto v = vector(1f, 2, 3, 4);
@@ -97,6 +110,42 @@ void main()
         assert(equal(v, vector(5f, 2, 3, 4)));
     });
     
+    test!((_)
+    {
+        auto v = vector(1f, 2, 3, 4);
+        auto y = vector(5f, 5, 5, 5);
+        v = setY(v, y);
+        assert(equal(v, vector(1f, 5, 3, 4)));
+    });
+
+    test!((_)
+    {
+        auto v = vector(1f, 2, 3, 4);
+        auto z = vector(5f, 5, 5, 5);
+        v = setZ(v, z);
+        assert(equal(v, vector(1f, 2, 5, 4)));
+    });
+
+    test!((_)
+    {
+        auto v = vector(1f, 2, 3, 4);
+        auto w = vector(5f, 5, 5, 5);
+        v = setW(v, w);
+        assert(equal(v, vector(1f, 2, 3, 5)));
+    });
+    
+    test!((_)
+    {
+        foreach(i; staticIota!256)
+        {
+            alias TypeTuple!(i & 3, (i >> 2) & 3, (i >> 4) & 3, (i >> 6) & 3) e;
+            auto v = vector(0f, 1, 2, 3);
+            v = swizzle!(concatenate!e)(v);
+            writeln(v.array);
+            assert(equal(v, vector(staticMap!(toFloat, e)))); 
+        } 
+    });
+
     test!((_)
     {
     });
