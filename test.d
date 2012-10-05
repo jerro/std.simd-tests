@@ -18,9 +18,9 @@ template concatenate(a...)
         enum concatenate = to!string(a[0]) ~ concatenate!(a[1 .. $]);
 }
 
-template toFloat(alias a)
+template toFloatTemplate(alias a)
 {
-    enum toFloat = cast(float) a;
+    enum toFloatTemplate = cast(float) a;
 }
 
 template toUByte(alias a)
@@ -142,7 +142,7 @@ void main()
             alias TypeTuple!(i & 3, (i >> 2) & 3, (i >> 4) & 3, (i >> 6) & 3) e;
             auto v = vector(0f, 1, 2, 3);
             v = swizzle!(concatenate!e)(v);
-            assert(equal(v, vector(staticMap!(toFloat, e)))); 
+            assert(equal(v, vector(staticMap!(toFloatTemplate, e)))); 
         } 
     });
 
@@ -166,5 +166,42 @@ void main()
     
     test!((_)
     {
+        auto v = vector(cast(short) 0, 1, 2, 3, 4, 5, 6, 7);
+        assert(equal(unpackLow(v), vector(0, 1, 2, 3))); 
+        assert(equal(unpackHigh(v), vector(4, 5, 6, 7))); 
+    });
+    
+    test!((_)
+    {
+        auto v1 = vector(0, 1, 2, 3);
+        auto v2 = vector(4, 5, 6, 7);
+        assert(equal(pack(v1, v2), vector(cast(short) 0, 1, 2, 3, 4, 5, 6, 7)));
+    });
+    
+    test!((_)
+    {
+        auto s = short.max;
+        auto v1 = vector(0, 1 + s, 2, 3);
+        auto v2 = vector(4, 5, 6 + s, 7);
+        assert(equal(packSaturate(v1, v2), 
+            vector(cast(short) 0, s, 2, 3, 4, 5, s, 7)));
+    });
+
+    test!((_)
+    {
+        assert(equal(toInt(vector(0f, 1, 2, 3)), vector(0, 1, 2, 3))); 
+        assert(equal(toInt(vector(1.0 , 2)), vector(1, 2, 0, 0))); 
+    });
+
+    test!((_)
+    {
+        assert(equal(toFloat(vector(0, 1, 2, 3)), vector(0f, 1, 2, 3))); 
+        assert(equal(toFloat(vector(1.0 , 2)), vector(1f, 2, 0, 0))); 
+    });
+
+    test!((_)
+    {
+        assert(equal(toDouble(vector(1, 2, 3, 4)), vector(1.0, 2))); 
+        assert(equal(toDouble(vector(1f, 2, 3, 4)), vector(1.0, 2))); 
     });
 }
