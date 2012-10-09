@@ -1,4 +1,4 @@
-import std.stdio, std.traits, std.math, std.conv, std.typetuple;
+import std.stdio, std.traits, std.math, std.conv, std.typetuple, std.string;
 import std.simd;
 import core.simd;
 
@@ -13,12 +13,12 @@ template staticIota(int start, int end, int stride = 1)
             staticIota;
 }
 
-template staticRepeat(alias a, int n) 
+template staticRepeat(int n, a...) if(a.length == 1)
 {
     static if(n <= 0)
         alias tt!() staticRepeat;
     else
-        alias tt!(a, staticRepeat!(a, n - 1)) staticRepeat;
+        alias tt!(a, staticRepeat!(n - 1, a)) staticRepeat;
 }
 
 template staticMapF(alias f, a...)
@@ -88,7 +88,7 @@ auto eq(V)(V a, V b) if(!isFloatingPoint!V && !isIntegral!V)
     return true;
 }
 
-void test(alias f)(int line = __LINE__)
+void test(alias f)(int line = __LINE__, string message = "")
 {
     static if(is(typeof(f(0))))
         f(0);
@@ -96,10 +96,118 @@ void test(alias f)(int line = __LINE__)
         writefln("Test on line %s failed to compile.", line); 
 }
 
-template ArrayType(T : T[]) { alias T ArrayType; }
+template group(a...){ alias a members; }
+
+template ungroup(g...) if(g.length == 1)
+{
+    alias g[0] g0;
+
+    static if(is(typeof(g0.members)))
+        alias g0.members ungroup;
+    else
+        alias g0 ungroup;
+}
+
+template testElementWise_(
+    alias finit, alias vecOps, alias fresult, int vecBytes = 16, Scal...)
+{
+    static if(Scal.length == 0)
+        alias tt!(float, double, byte, ubyte, short, ushort, int, uint, long, ulong)
+            Scalars;
+    else 
+        alias Scal Scalars; 
+
+    template initGroup(int n)
+    {
+        template initGroup(alias i)
+        {
+            alias group!(staticMapF!(ungroup!(finit)[i], staticIota!(0, n))) 
+                initGroup;
+        }
+    }
+
+    void testElementWise()
+    {
+        foreach(T; Scalars)
+        {
+            enum n = vecBytes / T.sizeof;
+            enum nParams = ungroup!(finit).length;
+            alias staticMap!(initGroup!n, staticIota!(0, nParams)) initTuple;
+
+            alias Vector!(T[n]) V;
+            staticRepeat!(nParams, V) params;
+            foreach(i, _; params)
+                params[i] = vectorT!T(ungroup!(initTuple[i])); 
+            
+            foreach(i, _; params)
+                writeln(params[i].array);
+ 
+            writeln();
+
+            foreach(i, _; vecOps)
+            {
+            }
+        }
+    } 
+}
+
+void testElementWise(
+    alias finitGroup, alias opsGroup, int vecBytes = 16, Scal...)()
+{
+    static if(Scal.length == 0)
+        alias tt!(float, double, byte, ubyte, short, ushort, int, uint, long, ulong)
+            Scalars;
+    else 
+        alias Scal Scalars; 
+   
+    alias ungroup!finitGroup finit;
+    alias ungroup!opsGroup ops;
+ 
+    enum nParams = finit.length;
+    enum nOps = ops.length / 2;
+ 
+    foreach(T; Scalars)
+    {
+        enum n = vecBytes / T.sizeof;
+        alias Vector!(T[n]) V;
+        staticRepeat!(nParams, V) params;
+
+        foreach(i, _; params)
+            foreach(long j; 0 .. n)
+                (cast(T*) &params[i])[j] = cast(T) finit[i](j);
+
+        foreach(i; staticIota!(0, 2 * nOps, 2) )
+        {
+            V correct;
+            foreach(j; staticIota!(0, n))
+            {
+                staticRepeat!(nParams, T) scalarParams;
+                foreach(k, _2; scalarParams)
+                    scalarParams[k] = params[k].array[j];
+               
+                (cast(T*) &correct)[j] = cast(T)ops[i + 1](scalarParams);
+            }
+            
+            static if(is(typeof(ops[i](params))))
+                assert(eq(ops[i](params), correct), format(
+                    "Function %s returned an incorrect result when called with parameters of type %s",
+                     ops[i].stringof, V.stringof ));
+            else
+                pragma(msg, 
+                    "Failed to compile function " ~ ops[i].stringof ~ 
+                    " called with parameters of type " ~ V.stringof); 
+        }
+    }
+}
 
 void main()
 {
+    testElementWise!(
+        group!(a => 3 * a, a => a + 5), 
+        group!(
+            add, (a, b) => a + b,  
+            mul, (a, b) => a * b))();
+
     enum vecBytes = 16;
     
     test!((_)
@@ -339,11 +447,11 @@ void main()
         {
             enum n = vecBytes / T.sizeof;
             auto v1 = vectorT!T(staticIota!(1, n + 1));
-            auto v2 = vectorT!T(staticRepeat!(2, n));
-            auto v3 = vectorT!T(staticRepeat!(3, n));
-            auto vmin = vectorT!T(1, staticRepeat!(2, n - 1));
+            auto v2 = vectorT!T(staticRepeat!(n, 2));
+            auto v3 = vectorT!T(staticRepeat!(n, 3));
+            auto vmin = vectorT!T(1, staticRepeat!(n - 1, 2));
             auto vmax = vectorT!T(2, staticIota!(2, n + 1));
-            auto vclamp = vectorT!T(2, 2, staticRepeat!(3, n - 2));
+            auto vclamp = vectorT!T(2, 2, staticRepeat!(n - 2, 3));
             assert(eq(min!(SIMDVer.SSE41)(v1, v2), vmin));
             assert(eq(max!(SIMDVer.SSE41)(v1, v2), vmax));
             assert(eq(clamp!(SIMDVer.SSE41)(v2, v1, v3), vclamp));
@@ -355,8 +463,8 @@ void main()
         foreach(T; tt!(float, double))
         {
             enum n = vecBytes / T.sizeof;
-            auto v1 = vectorT!T(staticRepeat!(1, n));
-            auto v2 = vectorT!T(staticRepeat!(1 + n, n));
+            auto v1 = vectorT!T(staticRepeat!(n, 1));
+            auto v2 = vectorT!T(staticRepeat!(n, 1 + n));
             auto dt = 1.0 / n;
             auto t = vectorT!T(staticIota!(0, n));
             t /= n;
