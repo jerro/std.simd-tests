@@ -1,4 +1,5 @@
-import std.stdio, std.traits, std.math, std.conv, std.typetuple, std.string;
+import std.stdio, std.traits, std.math, std.conv, std.typetuple, std.string,
+    std.bigint;
 import std.simd;
 import core.simd;
 
@@ -67,22 +68,22 @@ auto vectorT(T, A...)(A a)
 
 auto vector(A...)(A a) { return vectorT!(A[0])(a); }
 
-auto eq(T)(T a, T b) if(isIntegral!T)
+auto eq(bool approx = false, T)(T a, T b) if(isIntegral!T)
 {
     return a == b;
 }
 
-auto eq(T)(T a, T b) if(isFloatingPoint!T)
+auto eq(bool approx = false, T)(T a, T b) if(isFloatingPoint!T)
 {
-    return feqrel(a, b) + 2 >= T.mant_dig;
+    return feqrel(a, b) + 3 >= (approx ? T.mant_dig / 2 : T.mant_dig);
 }
 
-auto eq(V)(V a, V b) if(!isFloatingPoint!V && !isIntegral!V)
+auto eq(bool approx = false, V)(V a, V b) if(!isFloatingPoint!V && !isIntegral!V)
 {
     alias typeof(a.array[0]) T;
 
     foreach(i; staticIota!(0, V.init.length))
-        if(!eq(a.array[i], b.array[i]))
+        if(!eq!approx(a.array[i], b.array[i]))
             return false;
 
     return true;
@@ -98,61 +99,9 @@ void test(alias f)(int line = __LINE__, string message = "")
 
 template group(a...){ alias a members; }
 
-template ungroup(g...) if(g.length == 1)
-{
-    alias g[0] g0;
-
-    static if(is(typeof(g0.members)))
-        alias g0.members ungroup;
-    else
-        alias g0 ungroup;
-}
-
-template testElementWise_(
-    alias finit, alias vecOps, alias fresult, int vecBytes = 16, Scal...)
-{
-    static if(Scal.length == 0)
-        alias tt!(float, double, byte, ubyte, short, ushort, int, uint, long, ulong)
-            Scalars;
-    else 
-        alias Scal Scalars; 
-
-    template initGroup(int n)
-    {
-        template initGroup(alias i)
-        {
-            alias group!(staticMapF!(ungroup!(finit)[i], staticIota!(0, n))) 
-                initGroup;
-        }
-    }
-
-    void testElementWise()
-    {
-        foreach(T; Scalars)
-        {
-            enum n = vecBytes / T.sizeof;
-            enum nParams = ungroup!(finit).length;
-            alias staticMap!(initGroup!n, staticIota!(0, nParams)) initTuple;
-
-            alias Vector!(T[n]) V;
-            staticRepeat!(nParams, V) params;
-            foreach(i, _; params)
-                params[i] = vectorT!T(ungroup!(initTuple[i])); 
-            
-            foreach(i, _; params)
-                writeln(params[i].array);
- 
-            writeln();
-
-            foreach(i, _; vecOps)
-            {
-            }
-        }
-    } 
-}
-
 void testElementWise(
-    alias finitGroup, alias opsGroup, int vecBytes = 16, Scal...)()
+    alias finitGroup, alias opsGroup, bool approx = false, 
+    SIMDVer ver = SIMDVer.SSE42, int vecBytes = 16, Scal...)()
 {
     static if(Scal.length == 0)
         alias tt!(float, double, byte, ubyte, short, ushort, int, uint, long, ulong)
@@ -160,8 +109,8 @@ void testElementWise(
     else 
         alias Scal Scalars; 
    
-    alias ungroup!finitGroup finit;
-    alias ungroup!opsGroup ops;
+    alias finitGroup.members finit;
+    alias opsGroup.members ops;
  
     enum nParams = finit.length;
     enum nOps = ops.length / 2;
@@ -187,26 +136,143 @@ void testElementWise(
                
                 (cast(T*) &correct)[j] = cast(T)ops[i + 1](scalarParams);
             }
-            
-            static if(is(typeof(ops[i](params))))
-                assert(eq(ops[i](params), correct), format(
-                    "Function %s returned an incorrect result when called with parameters of type %s",
-                     ops[i].stringof, V.stringof ));
+           
+            alias ops[i] op; 
+
+            static if(is(typeof(op!ver(params))))
+            {
+                assert(eq!approx(op!ver(params), correct), format(
+                    "Function %s, using instructions set %s,"
+                    " returned an incorrect result"
+                    " when called with parameters of type %s",
+                     op.stringof, ver.stringof, V.stringof ));
+            }
             else
                 pragma(msg, 
-                    "Failed to compile function " ~ ops[i].stringof ~ 
-                    " called with parameters of type " ~ V.stringof); 
+                    "Failed to compile function " ~ op.stringof ~
+                    ".\tvector type: " ~ V.stringof ~ 
+                    "   ver:  " ~ ver.stringof); 
         }
     }
 }
 
+template opSaturate(string op)
+{
+    auto opSaturate(T)(T a, T b)
+    {
+        static if(isIntegral!T)
+        {
+            auto ba = BigInt(a);
+            auto bb = BigInt(b);
+            auto br = mixin("ba" ~ op ~ "bb");
+            return 
+                br > T.max ? T.max :
+                br < T.min ? T.min : cast(T) br.toLong();
+        }
+        else
+            return a + b;
+    }
+}
+
+alias tt!(byte, ubyte, short, ushort, int, uint, long, ulong) integral;
+alias tt!(float, double) floatingPoint;
+
+@property intBitcast(T)(T a)
+{
+    static if(is(T == float))
+        return *cast(uint*)& a;
+    else static if(is(T == double))
+        return *cast(ulong*)& a;
+    else static if(isIntegral!T)
+        return a;
+    else
+        static assert(0); 
+}
+
+@property bitcast(R, T)(T a)
+{
+    return *cast(R*)& a;
+}
+
 void main()
 {
+    // precise unary floating point operations:
     testElementWise!(
-        group!(a => 3 * a, a => a + 5), 
+        group!(a => 0.55 * a + 0.51), 
         group!(
-            add, (a, b) => a + b,  
-            mul, (a, b) => a * b))();
+            std.simd.floor, std.algorithm.floor,
+            std.simd.ceil, std.algorithm.ceil,
+            std.simd.round, std.algorithm.round,
+            std.simd.trunc, std.algorithm.trunc),
+        false, SIMDVer.SSE42, 16, floatingPoint)();
+
+    // imprecise unary floating point operations:
+    testElementWise!(
+        group!(a => 0.55 * a + 0.51), 
+        group!(
+            rcp, a => cast(typeof(a)) 1 / a,
+            rcpEst, a => cast(typeof(a)) 1 / a,
+            rsqrt, a => cast(typeof(a)) 1 / std.math.sqrt(a),
+            std.simd.sqrt, std.math.sqrt),
+        true, SIMDVer.SSE42, 16, floatingPoint)();
+
+    // unary integral operations
+    testElementWise!(
+        group!(a => 2 * a - 1), 
+        group!(
+            comp, a => ~a),
+        false, SIMDVer.SSE42, 16, integral)();
+
+    // unary operations
+    testElementWise!(
+        group!(a => 2 * a - 1), 
+        group!(
+            neg, a => -a,
+            std.simd.abs, a => a < 0 ? -a : a))();
+
+    // binary operations:
+    testElementWise!(
+        group!(a => a + 2, a => 2 * a + 1), 
+        group!(
+            add, (a, b) => a + b,
+            sub, (a, b) => a - b,
+            addSaturate, opSaturate!"+",
+            subSaturate, opSaturate!"-",
+            mul, (a, b) => a * b,
+            div, (a, b) => a / b,
+            divEst, (a, b) => a / b,
+            std.simd.min, std.algorithm.min,
+            std.simd.max, std.algorithm.max,
+            or, (a, b) => (a.intBitcast | b.intBitcast).bitcast!(typeof(a)),
+            nor, (a, b) => (~(a.intBitcast | b.intBitcast)).bitcast!(typeof(a)),
+            and, (a, b) => (a.intBitcast & b.intBitcast).bitcast!(typeof(a)),
+            nand, (a, b) => (~(a.intBitcast & b.intBitcast)).bitcast!(typeof(a)),
+            andNot, (a, b) => (a.intBitcast & ~b.intBitcast).bitcast!(typeof(a)),
+            xor, (a, b) => (a.intBitcast ^ b.intBitcast).bitcast!(typeof(a))))();
+ 
+    // three operand operations:
+    testElementWise!(
+        group!(a => a + 2, a => 2 * a + 1, a => 3 - a),
+        group!(
+            madd, (a, b, c) => a * b + c,
+            msub, (a, b, c) => a * b - c,
+            nmadd, (a, b, c) => - a * b + c,
+            nmsub, (a, b, c) => - a * b - c,
+            lerp, (a, b, c) => a + c * (b - a),
+            clamp, (a, b, c) => std.algorithm.max(a, std.algorithm.min(b, c))))();
+
+    // four operand operations:
+    testElementWise!(
+        group!(a => a + 2, a => 2 * a + 1, a => 3 - a, a => 2),
+        group!(
+            selectEqual, (a, b, c, d) => a == b ? c : d,
+            selectNotEqual, (a, b, c, d) => a != b ? c : d,
+            selectGreater, (a, b, c, d) => a > b ? c : d,
+            selectGreaterEqual, (a, b, c, d) => a >= b ? c : d,
+            selectLess, (a, b, c, d) => a < b ? c : d,
+            selectLessEqual, (a, b, c, d) => a <= b ? c : d))();
+
+    // TODO: shifts
 
     enum vecBytes = 16;
     
@@ -352,17 +418,6 @@ void main()
     
     test!((_)
     {
-        foreach(T; tt!(int4, float4))
-        {
-            auto v1 = cast(T) vector(1, 2, 3, 4);
-            auto v2 = cast(T) vector(1 | 8, 2 | 8, 3 | 8, 4 | 8);
-            auto v3 = cast(T) vector(8, 8, 8, 8);
-            assert(eq(xor(v1, v2), v3));
-        }
-    });
-
-    test!((_)
-    {
         foreach(T; tt!(int, float))
         {
             auto v1 = vectorT!T(1, 2, 3, 4);
@@ -371,122 +426,4 @@ void main()
             assert(eq(std.simd.select(mask, v1, v2), vectorT!T(1, 6, 3, 8)));
         } 
     });
-
-    test!((_)
-    {
-        auto v1 = vector(1f, 2, 3, 4);
-        auto v2 = vector(2f, 2, 2, 2);
-        assert(eq(cast(int4) maskGreater(v1, v2), vector(0, 0, -1, -1)));
-    });
-
-    test!((_)
-    {
-        auto f32 = vector(1f, -2, 3, -4);
-        assert(eq(abs(f32), vector(1f, 2, 3, 4))); 
-        
-        auto i32 = vector(1, -2, 3, -4);
-        assert(eq(abs(i32), vector(1, 2, 3, 4))); 
-        
-        auto f64 = vector(1.0, -2);
-        assert(eq(abs(f64), vector(1.0, 2)));
-    });
-
-    test!((_)
-    {
-        foreach(T; tt!(byte, ubyte, short, ushort))
-        foreach(saturate; tt!(true, false))
-        foreach(addition; tt!(true, false))
-        static if(std.traits.isSigned!T || addition)
-        {
-            enum s = T.max;
-            enum n = vecBytes / T.sizeof;        
-            auto v1 = vectorT!T(staticIota!(1, 1 + n));
-            auto r = vectorT!T(staticIota!(2, 2 + 2 * n, 2));
-
-            static if(saturate)
-            { 
-                typeof(v1) y = cast(T)(11 + s / 2);
-                v1 = setY(v1, y);
-                y = cast(T)s; 
-                r = setY(r, y);
-            }
-
-            static if(addition)
-            {
-                alias staticSelect!(saturate, addSaturate, add) op;
-                auto v2 = v1;
-            }
-            else
-            {
-                alias staticSelect!(saturate, subSaturate, sub) op;
-                auto v2 = -v1;
-            }
-
-            assert(eq(op(v1, v2), r));
-        }
-    });
-
-    test!((_)
-    {
-        auto v1 = vector(1f, 2, 3, 4);
-        auto v2 = vector(2f, 3, 4, 5);
-        auto v3 = vector(3f, 4, 5, 6);
-
-        assert(eq(mul(v1, v2), vector(2f, 6, 12, 20)));
-        assert(eq(madd(v1, v2, v3), vector(5f, 10, 17, 26)));
-        assert(eq(msub(v1, v2, v3), vector(-1f, 2, 7, 14)));
-        assert(eq(nmadd(v1, v2, v3), vector(1f, -2, -7, -14)));
-        assert(eq(nmsub(v1, v2, v3), vector(-5f, -10, -17, -26)));
-    });
-    
-    // TODO: selectGreater
-
-    test!((_)
-    {
-        foreach(T; tt!(float, double, int, uint, short, ushort, byte, ubyte))
-        {
-            enum n = vecBytes / T.sizeof;
-            auto v1 = vectorT!T(staticIota!(1, n + 1));
-            auto v2 = vectorT!T(staticRepeat!(n, 2));
-            auto v3 = vectorT!T(staticRepeat!(n, 3));
-            auto vmin = vectorT!T(1, staticRepeat!(n - 1, 2));
-            auto vmax = vectorT!T(2, staticIota!(2, n + 1));
-            auto vclamp = vectorT!T(2, 2, staticRepeat!(n - 2, 3));
-            assert(eq(min!(SIMDVer.SSE41)(v1, v2), vmin));
-            assert(eq(max!(SIMDVer.SSE41)(v1, v2), vmax));
-            assert(eq(clamp!(SIMDVer.SSE41)(v2, v1, v3), vclamp));
-        }
-    });
-
-    test!((_)
-    {
-        foreach(T; tt!(float, double))
-        {
-            enum n = vecBytes / T.sizeof;
-            auto v1 = vectorT!T(staticRepeat!(n, 1));
-            auto v2 = vectorT!T(staticRepeat!(n, 1 + n));
-            auto dt = 1.0 / n;
-            auto t = vectorT!T(staticIota!(0, n));
-            t /= n;
-            auto r = vectorT!T(staticIota!(1, n + 1));
-            assert(eq(lerp(v1, v2, t), r));
-        }
-    });
-
-    test!((_)
-    {
-        foreach(T; tt!(float, double))
-        {
-            enum n = vecBytes / T.sizeof;
-            alias staticMapF!(a => 0.55 + 0.9 * a, staticIota!(0, n)) vtuple;
-            auto v = vectorT!T(vtuple);
-            auto rfloor = vectorT!T(staticMapF!(a => cast(int) a, vtuple)); 
-            auto rceil = vectorT!T(staticMapF!(a => cast(int)(a + 1), vtuple)); 
-            auto rround = vectorT!T(staticMapF!(a => cast(int)(a + 0.5), vtuple));
-            assert(eq(floor!(SIMDVer.SSE41)(v), rfloor));
-            assert(eq(trunc!(SIMDVer.SSE41)(v), rfloor));
-            assert(eq(ceil!(SIMDVer.SSE41)(v), rceil));
-            assert(eq(round!(SIMDVer.SSE41)(v), rround));
-        }
-    }); 
 }
