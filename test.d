@@ -75,6 +75,9 @@ auto eq(bool approx = false, T)(T a, T b) if(isIntegral!T)
 
 auto eq(bool approx = false, T)(T a, T b) if(isFloatingPoint!T)
 {
+    if(a.isnan && b.isnan)
+        return true;
+
     return feqrel(a, b) + 3 >= (approx ? T.mant_dig / 2 : T.mant_dig);
 }
 
@@ -99,13 +102,15 @@ void test(alias f)(int line = __LINE__, string message = "")
 
 template group(a...){ alias a members; }
 
+alias tt!(byte, ubyte, short, ushort, int, uint, long, ulong) integral;
+alias tt!(float, double) floatingPoint;
+
 void testElementWise(
     alias finitGroup, alias opsGroup, bool approx = false, 
     SIMDVer ver = SIMDVer.SSE42, int vecBytes = 16, Scal...)()
 {
     static if(Scal.length == 0)
-        alias tt!(float, double, byte, ubyte, short, ushort, int, uint, long, ulong)
-            Scalars;
+        alias tt!(floatingPoint, integral) Scalars;
     else 
         alias Scal Scalars; 
    
@@ -174,9 +179,6 @@ template opSaturate(string op)
     }
 }
 
-alias tt!(byte, ubyte, short, ushort, int, uint, long, ulong) integral;
-alias tt!(float, double) floatingPoint;
-
 @property intBitcast(T)(T a)
 {
     static if(is(T == float))
@@ -216,17 +218,11 @@ void main()
             std.simd.sqrt, std.math.sqrt),
         true, SIMDVer.SSE42, 16, floatingPoint)();
 
-    // unary integral operations
-    testElementWise!(
-        group!(a => 2 * a - 1), 
-        group!(
-            comp, a => ~a),
-        false, SIMDVer.SSE42, 16, integral)();
-
     // unary operations
     testElementWise!(
         group!(a => 2 * a - 1), 
         group!(
+            comp, a => (~a.intBitcast).bitcast!(typeof(a)),
             neg, a => -a,
             std.simd.abs, a => a < 0 ? -a : a))();
 
