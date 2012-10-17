@@ -413,7 +413,8 @@ void main()
         enum n = nElements!V; 
         alias BaseType!V T;       
         alias staticIota!(1, n + 1) seq;
-
+        
+        Vector!(ubyte[V.sizeof]) mask;
         V v, v1, v2; 
         V ones = 1;
         V zeros = 0;
@@ -512,8 +513,29 @@ void main()
         static if(n == 2)
             test!toDouble(vector!T(seq), vector!double(seq));
     
-        // TODO: shifts
-        // TODO: select
+        static if(isIntegral!T && T.sizeof > 1)
+        {
+            v1 = vector!T(staticIota!(0, 2 * n, 2));
+            v2 = 0;
+            v2.array[0] = 1;
+
+            test!shiftLeft(v1, v2, vector!T(staticIota!(0, 4 * n, 4))); 
+            test!(shiftLeftImmediate, false, 1, SIMDVer.SSE42)(
+                v1, vector!T(staticIota!(0, 4 * n, 4))); 
+            
+            test!shiftRight(v1, v2, vector!T(staticIota!(0, n))); 
+            test!(shiftRightImmediate, false, 1, SIMDVer.SSE42)(
+                v1, vector!T(staticIota!(0, n))); 
+        } 
+
+        mask = 0;
+        foreach(i; 0 .. T.sizeof)
+            mask.array[i] = ubyte.max;
+        v1 = vector!T(staticIota!(50, 50 + n));
+        v2 = vector!T(seq);
+        correct = v2;
+        correct.array[0] = v1.array[0];
+        test!(std.simd.select)(mask, v1, v2, correct);
     }
     
     {
