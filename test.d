@@ -56,7 +56,7 @@ template toUByte(alias a)
     enum toUByte = cast(ubyte) a;
 }
 
-auto vectorT(T, A...)(A a)
+auto vector(T, A...)(A a)
 {
     alias Vector!(T[A.length]) V;
     V r;
@@ -65,8 +65,6 @@ auto vectorT(T, A...)(A a)
     
     return r;
 }
-
-auto vector(A...)(A a) { return vectorT!(A[0])(a); }
 
 auto eq(bool approx = false, T)(T a, T b) if(isIntegral!T)
 {
@@ -92,18 +90,69 @@ auto eq(bool approx = false, V)(V a, V b) if(!isFloatingPoint!V && !isIntegral!V
     return true;
 }
 
-void test(alias f)(int line = __LINE__, string message = "")
+void print(T)(T a)
 {
-    static if(is(typeof(f(0))))
-        f(0);
+    static if(is(typeof(a.array)))
+        writeln(a.array);
     else
-        writefln("Test on line %s failed to compile.", line); 
+        writeln(a);
+}
+
+template test(alias op, bool approx = false, templateParams...)
+{
+    static if (templateParams.length == 0)
+        alias tt!(SIMDVer.SSE42) tParams;
+    else
+        alias templateParams tParams;
+
+    void test(A...)(A a)
+    {
+        alias a[0 .. $ - 1] params;
+        alias a[$ - 1] correct;
+        
+        static if(is(typeof(op!tParams(params))))
+        {
+            assert(eq!approx(op!tParams(params), correct), format(
+                "Function %s, using instructions set %s,"
+                " returned an incorrect result"
+                " when called with parameters of type %s",
+                op.stringof, tParams[$-1].stringof, typeof(params).stringof));
+        }
+        else
+            pragma(msg, 
+                "Failed to compile: " ~ op.stringof ~
+                "   parameters: " ~ typeof(params).stringof ~ 
+                "   ver:  " ~ tParams[$ - 1].stringof); 
+    }
 }
 
 template group(a...){ alias a members; }
 
 alias tt!(byte, ubyte, short, ushort, int, uint, long, ulong) integral;
 alias tt!(float, double) floatingPoint;
+
+
+template VecTypes(int vecSize)
+{
+    template VecTypes(A...)
+    {
+        static if(A.length == 0)
+            alias tt!() VecTypes;
+        else
+            alias tt!(Vector!(A[0][vecSize / A[0].sizeof]), VecTypes!(A[1 .. $])) 
+                VecTypes;
+    }
+}
+
+template BaseType(V)
+{
+    alias typeof(V.array[0]) BaseType;
+}
+
+template nElements(V)
+{
+    enum nElements = V.sizeof / BaseType!(V).sizeof;
+}
 
 void testElementWise(
     alias finitGroup, alias opsGroup, bool approx = false, 
@@ -144,19 +193,7 @@ void testElementWise(
            
             alias ops[i] op; 
 
-            static if(is(typeof(op!ver(params))))
-            {
-                assert(eq!approx(op!ver(params), correct), format(
-                    "Function %s, using instructions set %s,"
-                    " returned an incorrect result"
-                    " when called with parameters of type %s",
-                     op.stringof, ver.stringof, V.stringof ));
-            }
-            else
-                pragma(msg, 
-                    "Failed to compile function " ~ op.stringof ~
-                    ".\tvector type: " ~ V.stringof ~ 
-                    "   ver:  " ~ ver.stringof); 
+            test!(op, approx, ver)(params, correct);
         }
     }
 }
@@ -194,6 +231,13 @@ template opSaturate(string op)
 @property bitcast(R, T)(T a)
 {
     return *cast(R*)& a;
+}
+
+auto testStoreScalar(SIMDVer ver, V)(V vec)
+{
+    BaseType!V s;
+    storeScalar!ver(vec, &s);
+    return s;
 }
 
 void main()
@@ -268,30 +312,27 @@ void main()
             selectLess, (a, b, c, d) => a < b ? c : d,
             selectLessEqual, (a, b, c, d) => a <= b ? c : d))();
 
-    // TODO: shifts
+    alias VecTypes!16 Vec;
 
-    enum vecBytes = 16;
-    
-    test!((_)
+    foreach(V; Vec!(floatingPoint, integral))
     {
-        float a = 1;
-        auto v = loadScalar!float4(&a);
-        assert(eq(v, vector(1f, 0, 0, 0))); 
-    });
+        enum n = nElements!V; 
+        alias BaseType!V T;       
+        alias staticIota!(1, n + 1) seq;
+ 
+        T s = 1;
+        V correct = 0;
+        correct.array[0] = 1;
+        test!(loadScalar, false, V, SIMDVer.SSE42)(&s, correct);
+       
+        T[n + 1] a = [0, seq];
+        test!(loadUnaligned, false, V, SIMDVer.SSE42)(&a[1], vector!T(seq));
 
-    test!((_)
-    {
-        float[5] a = [0, 1, 2, 3, 4];
-        auto v = loadUnaligned!float4(&a[1]);
-        assert(eq(v, vector(1f, 2, 3, 4)));
-    });
-    
-    test!((_)
-    {
-        auto v = vector(1f, 2, 3, 4);
-        assert(eq(getScalar(v), 1f));
-    });
-    
+        testStoreScalar!(SIMDVer.SSE42,)(vector!T(seq));
+        test!testStoreScalar(vector!T(seq), to!T(1));
+    }
+
+    /* 
     test!((_)
     {
         auto v = vector(1f, 2, 3, 4);
@@ -308,6 +349,12 @@ void main()
         assert(eq(a[1], 1f));
     });
 
+    test!((_)
+    {
+        auto v = vector(1f, 2, 3, 4);
+        assert(eq(getScalar(v), 1f));
+    });
+    
     test!((_)
     {
         auto v = vector(1f, 2, 3, 4);
@@ -422,4 +469,5 @@ void main()
             assert(eq(std.simd.select(mask, v1, v2), vectorT!T(1, 6, 3, 8)));
         } 
     });
+    */
 }
