@@ -1,5 +1,5 @@
 import std.stdio, std.traits, std.math, std.conv, std.typetuple, std.string,
-    std.bigint, std.random, std.algorithm, std.range;
+    std.bigint, std.random, std.algorithm, std.range, std.getopt;
 import std.simd;
 import core.simd;
 
@@ -155,6 +155,8 @@ template nElements(V)
     enum nElements = V.sizeof / BaseType!(V).sizeof;
 }
 
+bool listSymbols = false;
+
 template test(alias op, bool approx = false, templateParams...)
 {
     static if (templateParams.length == 0)
@@ -169,31 +171,54 @@ template test(alias op, bool approx = false, templateParams...)
         
         static if(is(typeof(op!tParams(params))))
         {
-            auto r = op!tParams(params);   
-
-            if(!eq!approx(r, correct))
+            if(listSymbols)       
             {
-                stderr.writeln("Template parameters:");
-                foreach(p; tParams)
-                    static if(is(typeof(p)))
-                        stderr.print(p);
-
-                stderr.writeln("Parameters:");
+                //try to find the mangled name and print it
+                static if(is(typeof(op!tParams)))
+                {
+                    alias op!(tParams) fun;
+                    writeln(fun.mangleof);
+                    return;
+                }
                 foreach(p; params)
-                    stderr.print(p);
-                
-                stderr.writeln("Result: ");
-                stderr.print(r);
-                
-                stderr.writeln("Correct result: ");
-                stderr.print(correct);
- 
-                assert(false, format(
-                    "Function %s, using instructions set %s,"
-                    " returned an incorrect result"
-                    " when called with parameters of type %s",
-                    op.stringof, tParams[$-1].stringof, 
-                    typeof(params).stringof));
+                    static if(
+                        is(typeof(op!(tParams, typeof(p)))) && 
+                        is(typeof(op!(tParams, typeof(p))(params)) == 
+                        typeof(op!tParams(params))))
+                    {
+                        alias op!(tParams, typeof(p)) fun;
+                        writeln(fun.mangleof);
+                        return;
+                    }
+            }
+            else
+            {
+                auto r = op!tParams(params);   
+
+                if(!eq!approx(r, correct))
+                {
+                    stderr.writeln("Template parameters:");
+                    foreach(p; tParams)
+                        static if(is(typeof(p)))
+                            stderr.print(p);
+
+                    stderr.writeln("Parameters:");
+                    foreach(p; params)
+                        stderr.print(p);
+                    
+                    stderr.writeln("Result: ");
+                    stderr.print(r);
+                    
+                    stderr.writeln("Correct result: ");
+                    stderr.print(correct);
+     
+                    assert(false, format(
+                        "Function %s, using instructions set %s,"
+                        " returned an incorrect result"
+                        " when called with parameters of type %s",
+                        op.stringof, tParams[$-1].stringof, 
+                        typeof(params).stringof));
+                }
             }           
         }
         else
@@ -334,8 +359,10 @@ auto testStoreUnaligned(SIMDVer ver, V)(V v)
     return r;
 }
 
-void main()
+void main(string[] args)
 {
+    getopt(args, "l", &listSymbols); 
+
     // precise unary floating point operations:
     testElementWise!(
         group!(a => 0.55 * a + 0.51), 
