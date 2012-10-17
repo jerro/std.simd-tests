@@ -328,7 +328,6 @@ void main()
         T[n + 1] a = [0, seq];
         test!(loadUnaligned, false, V, SIMDVer.SSE42)(&a[1], vector!T(seq));
 
-        testStoreScalar!(SIMDVer.SSE42,)(vector!T(seq));
         test!testStoreScalar(vector!T(seq), to!T(1));
     }
 
