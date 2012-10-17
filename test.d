@@ -120,12 +120,12 @@ auto eq(bool approx = false, V)(V a, V b) if(!isFloatingPoint!V && !isIntegral!V
     return true;
 }
 
-void print(T)(T a)
+void print(T)(File f, T a)
 {
     static if(is(typeof(a.array)))
-        writeln(a.array);
+        f.writeln(a.array);
     else
-        writeln(a);
+        f.writeln(a);
 }
 
 template group(a...){ alias a members; }
@@ -169,22 +169,32 @@ template test(alias op, bool approx = false, templateParams...)
         
         static if(is(typeof(op!tParams(params))))
         {
-            if(!eq!approx(op!tParams(params), correct))
+            auto r = op!tParams(params);   
+
+            if(!eq!approx(r, correct))
             {
-                static if(is(typeof(tParams[0])))
-                    writeln(tParams[0]);
+                stderr.writeln("Template parameters:");
+                foreach(p; tParams)
+                    static if(is(typeof(p)))
+                        stderr.print(p);
+
+                stderr.writeln("Parameters:");
                 foreach(p; params)
-                    print(p);
+                    stderr.print(p);
                 
-                print(correct);
-                print(op!tParams(params));
-            }           
+                stderr.writeln("Result: ");
+                stderr.print(r);
+                
+                stderr.writeln("Correct result: ");
+                stderr.print(correct);
  
-            assert(eq!approx(op!tParams(params), correct), format(
-                "Function %s, using instructions set %s,"
-                " returned an incorrect result"
-                " when called with parameters of type %s",
-                op.stringof, tParams[$-1].stringof, typeof(params).stringof));
+                assert(false, format(
+                    "Function %s, using instructions set %s,"
+                    " returned an incorrect result"
+                    " when called with parameters of type %s",
+                    op.stringof, tParams[$-1].stringof, 
+                    typeof(params).stringof));
+            }           
         }
         else
             pragma(msg, 
@@ -451,7 +461,7 @@ void main()
             test!getW(correct, ones);
         }
         
-        foreach(ind; swizzleStrings!(n, 100))
+        foreach(ind; swizzleStrings!(n, 50))
             test!(swizzle, false, ind, SIMDVer.SSE42)(
                 vseq, simpleSwizzle(ind, vseq));
         
