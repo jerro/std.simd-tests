@@ -1,9 +1,39 @@
 import std.stdio, std.traits, std.math, std.conv, std.typetuple, std.string,
-    std.bigint;
+    std.bigint, std.random, std.algorithm, std.range;
 import std.simd;
 import core.simd;
 
 alias TypeTuple tt;
+
+template PromotionOf(T)
+{
+    static if(is(T == int4))
+        alias long2 PromotionOf;
+    else static if(is(T == uint4))
+        alias ulong2 PromotionOf;
+    else static if(is(T == short8))
+        alias int4 PromotionOf;
+    else static if(is(T == ushort8))
+        alias uint4 PromotionOf;
+    else static if(is(T == byte16))
+        alias short8 PromotionOf;
+    else static if(is(T == ubyte16))
+        alias ushort8 PromotionOf;
+    else static if(is(T == int))
+        alias long PromotionOf;
+    else static if(is(T == uint))
+        alias ulong PromotionOf;
+    else static if(is(T == short))
+        alias int PromotionOf;
+    else static if(is(T == ushort))
+        alias uint PromotionOf;
+    else static if(is(T == byte))
+        alias short PromotionOf;
+    else static if(is(T == ubyte))
+        alias ushort PromotionOf;
+    else
+        static assert(0, "Incorrect type");
+}
 
 template staticIota(int start, int end, int stride = 1)
 {
@@ -98,39 +128,10 @@ void print(T)(T a)
         writeln(a);
 }
 
-template test(alias op, bool approx = false, templateParams...)
-{
-    static if (templateParams.length == 0)
-        alias tt!(SIMDVer.SSE42) tParams;
-    else
-        alias templateParams tParams;
-
-    void test(A...)(A a)
-    {
-        alias a[0 .. $ - 1] params;
-        alias a[$ - 1] correct;
-        
-        static if(is(typeof(op!tParams(params))))
-        {
-            assert(eq!approx(op!tParams(params), correct), format(
-                "Function %s, using instructions set %s,"
-                " returned an incorrect result"
-                " when called with parameters of type %s",
-                op.stringof, tParams[$-1].stringof, typeof(params).stringof));
-        }
-        else
-            pragma(msg, 
-                "Failed to compile: " ~ op.stringof ~
-                "   parameters: " ~ typeof(params).stringof ~ 
-                "   ver:  " ~ tParams[$ - 1].stringof); 
-    }
-}
-
 template group(a...){ alias a members; }
 
 alias tt!(byte, ubyte, short, ushort, int, uint, long, ulong) integral;
 alias tt!(float, double) floatingPoint;
-
 
 template VecTypes(int vecSize)
 {
@@ -152,6 +153,45 @@ template BaseType(V)
 template nElements(V)
 {
     enum nElements = V.sizeof / BaseType!(V).sizeof;
+}
+
+template test(alias op, bool approx = false, templateParams...)
+{
+    static if (templateParams.length == 0)
+        alias tt!(SIMDVer.SSE42) tParams;
+    else
+        alias templateParams tParams;
+
+    void test(A...)(A a)
+    {
+        alias a[0 .. $ - 1] params;
+        alias a[$ - 1] correct;
+        
+        static if(is(typeof(op!tParams(params))))
+        {
+            if(!eq!approx(op!tParams(params), correct))
+            {
+                static if(is(typeof(tParams[0])))
+                    writeln(tParams[0]);
+                foreach(p; params)
+                    print(p);
+                
+                print(correct);
+                print(op!tParams(params));
+            }           
+ 
+            assert(eq!approx(op!tParams(params), correct), format(
+                "Function %s, using instructions set %s,"
+                " returned an incorrect result"
+                " when called with parameters of type %s",
+                op.stringof, tParams[$-1].stringof, typeof(params).stringof));
+        }
+        else
+            pragma(msg, 
+                "Failed to compile: " ~ op.stringof ~
+                "   parameters: " ~ typeof(params).stringof ~ 
+                "   ver:  " ~ tParams[$ - 1].stringof); 
+    }
 }
 
 void testElementWise(
@@ -233,11 +273,55 @@ template opSaturate(string op)
     return *cast(R*)& a;
 }
 
+auto randomSwizzleString(int n, int seed)
+{
+    assert(n <= 16);
+    auto rng = Xorshift128(seed);
+    char[16] r;
+    foreach(ref e; r)
+        e = "0123456789ABCDEF"[uniform(0, n, rng)];
+
+    return r[0 .. n].idup;
+}
+
+template swizzleStrings(int nElements, int maxNStrings)
+{
+    auto f() 
+    {
+        assert(nElements <= 16);
+        bool[string] table;
+        foreach(i; 0 .. maxNStrings)
+            table[`"` ~ randomSwizzleString(nElements, i) ~ `"`] = true;
+
+        return "alias tt!(" ~ table.keys.join(", ").idup ~ ") swizzleStrings;";
+    }
+    
+    mixin(f);
+}
+
+auto simpleSwizzle(V)(string ind, V v)
+{
+    V r;
+    foreach(i, char c; ind)
+        r.array[i] = v.array["0123456789ABCDEF".countUntil(c)]; 
+    
+    return r;
+}
+
 auto testStoreScalar(SIMDVer ver, V)(V vec)
 {
     BaseType!V s;
     storeScalar!ver(vec, &s);
     return s;
+}
+
+auto testStoreUnaligned(SIMDVer ver, V)(V v)
+{
+    BaseType!(V)[nElements!V + 1] mem;
+    storeUnaligned!ver(v, &mem[1]);
+    V r;
+    r.array[] = mem[1 .. $];
+    return r;
 }
 
 void main()
@@ -319,154 +403,116 @@ void main()
         enum n = nElements!V; 
         alias BaseType!V T;       
         alias staticIota!(1, n + 1) seq;
- 
+
+        V v, v1, v2; 
+        V ones = 1;
+        V zeros = 0;
+        V correct;
+        V vseq = vector!T(seq);
+
         T s = 1;
-        V correct = 0;
+        correct = 0;
         correct.array[0] = 1;
         test!(loadScalar, false, V, SIMDVer.SSE42)(&s, correct);
        
         T[n + 1] a = [0, seq];
         test!(loadUnaligned, false, V, SIMDVer.SSE42)(&a[1], vector!T(seq));
 
+        test!getScalar(vector!T(seq), to!T(1));
         test!testStoreScalar(vector!T(seq), to!T(1));
+        test!testStoreUnaligned(vector!T(seq), vector!T(seq));
+
+        correct = 0;
+        correct.array[0] = 1;
+        test!setX(zeros, ones, correct);
+        test!getX(correct, ones);
+
+        static if(n >= 2)
+        {
+            correct = 0;
+            correct.array[1] = 1;
+            test!setY(zeros, ones, correct);
+            test!getY(correct, ones);
+        }
+        
+        static if(n >= 3)
+        {
+            correct = 0;
+            correct.array[2] = 1;
+            test!setZ(zeros, ones, correct);
+            test!getZ(correct, ones);
+        }
+
+        static if(n >= 4)
+        {
+            correct = 0;
+            correct.array[3] = 1;
+            test!setW(zeros, ones, correct);
+            test!getW(correct, ones);
+        }
+        
+        foreach(ind; swizzleStrings!(n, 100))
+            test!(swizzle, false, ind, SIMDVer.SSE42)(
+                vseq, simpleSwizzle(ind, vseq));
+        
+        // broadcasts
+        foreach(i; staticIota!(0, n))
+        {
+            enum swiz = "" ~ "0123456789abcdef"[i];
+            v = 0;
+            v.array[i] = 1;
+            test!(swizzle, false, swiz, SIMDVer.SSE42)(v, ones); 
+        }
+
+        {
+            alias staticIota!(0, 2 * n) both;
+            v1 = vector!T(both[0 .. n]);
+            v2 = vector!T(both[n .. 2 * n]);
+            auto result = new T[2 * n];
+            foreach(i; both)
+               result[i] =  n * (i & 1) + (i >> 1);
+            correct.array[] = result[0 .. n];
+            test!interleaveLow(v1, v2, correct);
+            correct.array[] = result[n .. $];
+            test!interleaveHigh(v1, v2, correct);
+        }
+
+        static if(is(PromotionOf!T))
+        {
+            alias PromotionOf!T P;
+            alias Vector!(P[n / 2]) VP;
+            VP vp1, vp2;
+
+            v = vector!T(staticIota!(0, n));
+            vp1 = vector!P(staticIota!(0, n / 2));
+            vp2 = vector!P(staticIota!(n / 2, n));
+            test!unpackLow(v, vp1); 
+            test!unpackHigh(v, vp2);
+            test!pack(vp1, vp2, v); 
+            test!packSaturate(vp1, vp2, v); // TODO: check that it saturates
+        }
+
+        static if(n == 4)
+        {
+            v = vector!T(seq);
+            test!toFloat(v, vector!float(seq));
+            test!toInt(v, vector!int(seq));
+        }
+
+        static if(n == 2)
+            test!toDouble(vector!T(seq), vector!double(seq));
+    
+        // TODO: shifts
+        // TODO: select
+    }
+    
+    {
+        auto mask = vector!ubyte(
+            10, 4, 0, 1, 2, 11, 3, 6, 7, 8, 2, 9, 12, 6, 14, 15);
+        auto v = vector!ubyte(staticIota!(0, 16));
+        test!permute(v, mask, mask);
     }
 
-    /* 
-    test!((_)
-    {
-        auto v = vector(1f, 2, 3, 4);
-        float a;
-        storeScalar(v, &a);
-        assert(eq(a, 1f));
-    });
-
-    test!((_)
-    {
-        auto v = vector(1f, 2, 3, 4);
-        float[5] a;
-        storeUnaligned(v, &a[1]);
-        assert(eq(a[1], 1f));
-    });
-
-    test!((_)
-    {
-        auto v = vector(1f, 2, 3, 4);
-        assert(eq(getScalar(v), 1f));
-    });
-    
-    test!((_)
-    {
-        auto v = vector(1f, 2, 3, 4);
-        auto x = vector(5f, 5, 5, 5);
-        assert(eq(setX(v, x), vector(5f, 2, 3, 4)));
-    });
-    
-    test!((_)
-    {
-        auto v = vector(1f, 2, 3, 4);
-        auto y = vector(5f, 5, 5, 5);
-        assert(eq(setY(v, y), vector(1f, 5, 3, 4)));
-    });
-
-    test!((_)
-    {
-        auto v = vector(1f, 2, 3, 4);
-        auto z = vector(5f, 5, 5, 5);
-        assert(eq(setZ(v, z), vector(1f, 2, 5, 4)));
-    });
-
-    test!((_)
-    {
-        auto v = vector(1f, 2, 3, 4);
-        auto w = vector(5f, 5, 5, 5);
-        assert(eq(setW(v, w), vector(1f, 2, 3, 5)));
-    });
-    
-    test!((_)
-    {
-        foreach(i; staticIota!(0, 256))
-        {
-            alias tt!(i & 3, (i >> 2) & 3, (i >> 4) & 3, (i >> 6) & 3) e;
-            auto v = vector(0f, 1, 2, 3);
-            v = swizzle!(concatenate!e)(v);
-            assert(eq(v, vector(staticMap!(toFloatTemplate, e)))); 
-        } 
-    });
-
-    test!((_)
-    {
-        auto v = vector(staticMap!(toUByte, staticIota!(0, vecBytes)));
-        auto mask = vector(
-            cast(ubyte) 10, 4, 0, 1, 2, 11, 3, 6, 7, 8, 2, 9, 12, 6, 14, 15); 
-
-        v = permute!(SIMDVer.SSE3)(v, mask);
-        assert(eq(v, mask));
-    });
-
-    test!((_)
-    {
-        auto v1 = vector(0f, 1, 2, 3);
-        auto v2 = vector(4f, 5, 6, 7);
-        assert(eq(interleaveLow(v1, v2), vector(0f, 4, 1, 5))); 
-        assert(eq(interleaveHigh(v1, v2), vector(2f, 6, 3, 7))); 
-    });
-    
-    test!((_)
-    {
-        auto v = vector(cast(short) 0, 1, 2, 3, 4, 5, 6, 7);
-        assert(eq(unpackLow(v), vector(0, 1, 2, 3))); 
-        assert(eq(unpackHigh(v), vector(4, 5, 6, 7))); 
-    });
-    
-    test!((_)
-    {
-        auto v1 = vector(0, 1, 2, 3);
-        auto v2 = vector(4, 5, 6, 7);
-        assert(eq(pack(v1, v2), vector(cast(short) 0, 1, 2, 3, 4, 5, 6, 7)));
-    });
-    
-    test!((_)
-    {
-        auto s = short.max;
-        auto v1 = vector(0, 1 + s, 2, 3);
-        auto v2 = vector(4, 5, 6 + s, 7);
-        assert(eq(packSaturate(v1, v2), 
-            vector(cast(short) 0, s, 2, 3, 4, 5, s, 7)));
-    });
-
-    test!((_)
-    {
-        assert(eq(toInt(vector(0f, 1, 2, 3)), vector(0, 1, 2, 3))); 
-        assert(eq(toInt(vector(1.0 , 2)), vector(1, 2, 0, 0))); 
-    });
-
-    test!((_)
-    {
-        assert(eq(toFloat(vector(0, 1, 2, 3)), vector(0f, 1, 2, 3))); 
-        assert(eq(toFloat(vector(1.0 , 2)), vector(1f, 2, 0, 0))); 
-    });
-
-    test!((_)
-    {
-        assert(eq(toDouble(vector(1, 2, 3, 4)), vector(1.0, 2))); 
-        assert(eq(toDouble(vector(1f, 2, 3, 4)), vector(1.0, 2))); 
-    });
-
-    test!((_)
-    {
-        auto v = vector(1 << 3, 2 << 3, 3 << 3, 4 << 3);
-        assert(eq(shiftRightImmediate!3(v), vector(1, 2, 3, 4))); 
-    });
-    
-    test!((_)
-    {
-        foreach(T; tt!(int, float))
-        {
-            auto v1 = vectorT!T(1, 2, 3, 4);
-            auto v2 = vectorT!T(5, 6, 7, 8);
-            auto mask = cast(void16) vector(0, -1, 0, -1);
-            assert(eq(std.simd.select(mask, v1, v2), vectorT!T(1, 6, 3, 8)));
-        } 
-    });
-    */
+    //TODO: toFloat, toDouble, toInt for cases when the argument and the 
+    // result do not have the same number of elements.
 }
