@@ -52,40 +52,6 @@ template staticRepeat(int n, a...) if(a.length == 1)
         alias tt!(a, staticRepeat!(n - 1, a)) staticRepeat;
 }
 
-template staticMapF(alias f, a...)
-{
-    static if(a.length == 0)
-        alias tt!() staticMapF;
-    else
-        alias tt!(f(a[0]), staticMapF!(f, a[1 .. $])) staticMapF;
-}
-
-template concatenate(a...)
-{
-    static if(a.length == 0)
-        enum concatenate = "";
-    else 
-        enum concatenate = to!string(a[0]) ~ concatenate!(a[1 .. $]);
-}
-
-template staticSelect(bool first, a...) if (a.length == 2)
-{
-    static if(first)
-        alias a[0] staticSelect;
-    else
-        alias a[1] staticSelect; 
-}
-
-template toFloatTemplate(alias a)
-{
-    enum toFloatTemplate = cast(float) a;
-}
-
-template toUByte(alias a)
-{
-    enum toUByte = cast(ubyte) a;
-}
-
 auto vector(T, A...)(A a)
 {
     alias Vector!(T[A.length]) V;
@@ -132,18 +98,6 @@ template group(a...){ alias a members; }
 
 alias tt!(byte, ubyte, short, ushort, int, uint, long, ulong) integral;
 alias tt!(float, double) floatingPoint;
-
-template VecTypes(int vecSize)
-{
-    template VecTypes(A...)
-    {
-        static if(A.length == 0)
-            alias tt!() VecTypes;
-        else
-            alias tt!(Vector!(A[0][vecSize / A[0].sizeof]), VecTypes!(A[1 .. $])) 
-                VecTypes;
-    }
-}
 
 template BaseType(V)
 {
@@ -433,12 +387,12 @@ void main(string[] args)
             selectLess, (a, b, c, d) => a < b ? c : d,
             selectLessEqual, (a, b, c, d) => a <= b ? c : d))();
 
-    alias VecTypes!16 Vec;
+    enum vecBytes = 16;
 
-    foreach(V; Vec!(floatingPoint, integral))
+    foreach(T; tt!(floatingPoint, integral))
     {
-        enum n = nElements!V; 
-        alias BaseType!V T;       
+        enum n = vecBytes / T.sizeof; 
+        alias Vector!(T[n]) V;       
         alias staticIota!(1, n + 1) seq;
         
         Vector!(ubyte[V.sizeof]) mask;
@@ -552,7 +506,7 @@ void main(string[] args)
             
             test!shiftRight(v1, v2, vector!T(staticIota!(0, n))); 
             test!(shiftRightImmediate, false, 1, SIMDVer.SSE42)(
-                v1, vector!T(staticIota!(0, n))); 
+                v1, vector!T(staticIota!(0, n)));
         } 
 
         mask = 0;
@@ -563,6 +517,8 @@ void main(string[] args)
         correct = v2;
         correct.array[0] = v1.array[0];
         test!(std.simd.select)(mask, v1, v2, correct);
+        
+        //TODO: selectEqual, selectNotEqual...
     }
     
     {
@@ -574,4 +530,14 @@ void main(string[] args)
 
     //TODO: toFloat, toDouble, toInt for cases when the argument and the 
     // result do not have the same number of elements.
+    
+    //TODO: dot products, cross products, norms, magnitudes
+
+    //TODO: sqrtEst, rsqrtEst, magEst, normEst
+            
+    // TODO: shift, rotate bytes, elements
+
+    // TODO: allEqual, alNotEqual ...
+
+    // TODO: maskEqual, maskNotEqual ...
 }

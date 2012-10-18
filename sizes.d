@@ -13,7 +13,7 @@ void main()
     foreach(l; std.algorithm.splitter(shell("nm -St decimal test"), "\n"))
     {
         auto s = split(l);
-        if(s.empty)
+        if(s.length != 4)
             continue;
 
         auto name = s.back;
