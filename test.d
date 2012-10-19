@@ -103,6 +103,19 @@ auto eq(bool approx = false, V)(V a, V b) if(!isFloatingPoint!V && !isIntegral!V
     return true;
 }
 
+template getString(a...)
+{
+    static if(a.length == 0)
+        enum getString = "";
+    else
+    {
+        static if(is(typeof(a[0]) == string))
+            enum getString = `"` ~ a[0] ~ `" ` ~ getString!(a[1 .. $]);
+        else
+            enum getString = a[0].stringof ~ " " ~ getString!(a[1 .. $]);
+    }
+}
+
 void print(T)(File f, T a)
 {
     static if(is(typeof(a.array)))
@@ -186,8 +199,8 @@ template test(alias op, bool approx = false, templateParams...)
         else
             pragma(msg, 
                 "Failed to compile: " ~ op.stringof ~
-                "   parameters: " ~ typeof(params).stringof ~ 
-                "   ver:  " ~ tParams[$ - 1].stringof); 
+                "   params: " ~ typeof(params).stringof ~ 
+                "   tParams:  " ~ getString!tParams);
     }
 }
 
@@ -584,6 +597,9 @@ void main(string[] args)
         auto v = vector!ubyte(staticIota!(0, 16));
         test!permute(v, mask, mask);
     }
+
+    /*ubyte16 vv;
+    swizzle!("1772055017720550", SIMDVer.SSE42)(vv);*/
 
     //TODO: toFloat, toDouble, toInt for cases when the argument and the 
     // result do not have the same number of elements.
