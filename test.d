@@ -35,6 +35,16 @@ template PromotionOf(T)
         static assert(0, "Incorrect type");
 }
 
+template BaseType(V)
+{
+    alias typeof(V.array[0]) BaseType;
+}
+
+template nElements(V)
+{
+    enum nElements = V.sizeof / BaseType!(V).sizeof;
+}
+
 template staticIota(int start, int end, int stride = 1)
 {
     static if(start >= end)
@@ -59,6 +69,13 @@ auto vector(T, A...)(A a)
     foreach(i,_; A)
         (cast(T*) &r)[i] = cast(T) a[i];
     
+    return r;
+}
+
+auto repeated(V)(BaseType!V a)
+{
+    V r;
+    r = a;
     return r;
 }
 
@@ -98,16 +115,6 @@ template group(a...){ alias a members; }
 
 alias tt!(byte, ubyte, short, ushort, int, uint, long, ulong) integral;
 alias tt!(float, double) floatingPoint;
-
-template BaseType(V)
-{
-    alias typeof(V.array[0]) BaseType;
-}
-
-template nElements(V)
-{
-    enum nElements = V.sizeof / BaseType!(V).sizeof;
-}
 
 bool listSymbols = false;
 
@@ -160,6 +167,10 @@ template test(alias op, bool approx = false, templateParams...)
                     foreach(p; params)
                         stderr.print(p);
                     
+                    stderr.writeln("Parameter types:");
+                    foreach(p; params)
+                        stderr.print(typeof(p).stringof);
+                    
                     stderr.writeln("Result: ");
                     stderr.print(r);
                     
@@ -167,11 +178,8 @@ template test(alias op, bool approx = false, templateParams...)
                     stderr.print(correct);
      
                     assert(false, format(
-                        "Function %s, using instructions set %s,"
-                        " returned an incorrect result"
-                        " when called with parameters of type %s",
-                        op.stringof, tParams[$-1].stringof, 
-                        typeof(params).stringof));
+                        "Function %s returned an incorrect result", 
+                        op.stringof));
                 }
             }           
         }
@@ -288,11 +296,16 @@ template swizzleStrings(int nElements, int maxNStrings)
     mixin(f);
 }
 
+@property ptr_(V)(ref V v)
+{
+    return cast(BaseType!(V)*) &v;
+}
+
 auto simpleSwizzle(V)(string ind, V v)
 {
     V r;
     foreach(i, char c; ind)
-        r.array[i] = v.array["0123456789ABCDEF".countUntil(c)]; 
+        r.ptr_[i] = v.array["0123456789ABCDEF".countUntil(c)]; 
     
     return r;
 }
@@ -309,7 +322,7 @@ auto testStoreUnaligned(SIMDVer ver, V)(V v)
     BaseType!(V)[nElements!V + 1] mem;
     storeUnaligned!ver(v, &mem[1]);
     V r;
-    r.array[] = mem[1 .. $];
+    r.ptr_[0 .. nElements!V] = mem[1 .. $];
     return r;
 }
 
@@ -404,7 +417,7 @@ void main(string[] args)
 
         T s = 1;
         correct = 0;
-        correct.array[0] = 1;
+        correct.ptr_[0] = 1;
         test!(loadScalar, false, V, SIMDVer.SSE42)(&s, correct);
        
         T[n + 1] a = [0, seq];
@@ -415,14 +428,14 @@ void main(string[] args)
         test!testStoreUnaligned(vector!T(seq), vector!T(seq));
 
         correct = 0;
-        correct.array[0] = 1;
+        correct.ptr_[0] = 1;
         test!setX(zeros, ones, correct);
         test!getX(correct, ones);
 
         static if(n >= 2)
         {
             correct = 0;
-            correct.array[1] = 1;
+            correct.ptr_[1] = 1;
             test!setY(zeros, ones, correct);
             test!getY(correct, ones);
         }
@@ -430,7 +443,7 @@ void main(string[] args)
         static if(n >= 3)
         {
             correct = 0;
-            correct.array[2] = 1;
+            correct.ptr_[2] = 1;
             test!setZ(zeros, ones, correct);
             test!getZ(correct, ones);
         }
@@ -438,7 +451,7 @@ void main(string[] args)
         static if(n >= 4)
         {
             correct = 0;
-            correct.array[3] = 1;
+            correct.ptr_[3] = 1;
             test!setW(zeros, ones, correct);
             test!getW(correct, ones);
         }
@@ -452,7 +465,7 @@ void main(string[] args)
         {
             enum swiz = "" ~ "0123456789abcdef"[i];
             v = 0;
-            v.array[i] = 1;
+            v.ptr_[i] = 1;
             test!(swizzle, false, swiz, SIMDVer.SSE42)(v, ones); 
         }
 
@@ -463,9 +476,9 @@ void main(string[] args)
             auto result = new T[2 * n];
             foreach(i; both)
                result[i] =  n * (i & 1) + (i >> 1);
-            correct.array[] = result[0 .. n];
+            correct.ptr_[0 .. n] = result[0 .. n];
             test!interleaveLow(v1, v2, correct);
-            correct.array[] = result[n .. $];
+            correct.ptr_[0 .. n] = result[n .. $];
             test!interleaveHigh(v1, v2, correct);
         }
 
@@ -498,7 +511,7 @@ void main(string[] args)
         {
             v1 = vector!T(staticIota!(0, 2 * n, 2));
             v2 = 0;
-            v2.array[0] = 1;
+            v2.ptr_[0] = 1;
 
             test!shiftLeft(v1, v2, vector!T(staticIota!(0, 4 * n, 4))); 
             test!(shiftLeftImmediate, false, 1, SIMDVer.SSE42)(
@@ -511,14 +524,58 @@ void main(string[] args)
 
         mask = 0;
         foreach(i; 0 .. T.sizeof)
-            mask.array[i] = ubyte.max;
+            mask.ptr_[i] = ubyte.max;
         v1 = vector!T(staticIota!(50, 50 + n));
         v2 = vector!T(seq);
         correct = v2;
-        correct.array[0] = v1.array[0];
+        correct.ptr_[0] = v1.array[0];
         test!(std.simd.select)(mask, v1, v2, correct);
         
         //TODO: selectEqual, selectNotEqual...
+
+        static if(isFloatingPoint!T)
+        {
+            v1 = vector!T(seq);
+            v2 = vector!T(staticIota!(2, 2 + n));
+            
+            auto magSq = (T[] a) => reduce!"a + b * b"(to!T(0), a);
+            
+            static if(n >= 2)
+                test!dot2(v1, v2, repeated!V(1 * 2 + 2 * 3));
+            
+            static if(n >= 3)
+            {
+                test!dot3(v1, v2, repeated!V(1 * 2 + 2 * 3 + 3 * 4));
+                test!(magnitude3, true)(v1, repeated!V(
+                    std.math.sqrt(magSq(v1.ptr_[0 .. 3]))));
+                
+                test!(magSq3)(v1, repeated!V(magSq(v1.ptr_[0 .. 3])));
+
+                correct = v1;
+                correct /= std.math.sqrt(magSq(v1.ptr_[0 .. 3]));
+                test!(normalise3, true)(v1, correct);
+            }
+
+            static if(n >= 4)
+            {
+                test!dot4(v1, v2, repeated!V(1 * 2 + 2 * 3 + 3 * 4 + 4 * 5));
+                test!(magnitude4, true)(v1, repeated!V(
+                    std.math.sqrt(magSq(v1.ptr_[0 .. 4]))));
+                
+                test!(magSq4)(v1, repeated!V(magSq(v1.ptr_[0 .. 4])));
+
+                correct = v1;
+                correct /= std.math.sqrt(magSq(v1.ptr_[0 .. 4]));
+                test!(normalise4, true)(v1, correct);
+            }
+            
+            static if(n == 4)
+                test!cross3(v1, v2, vector!T(
+                    v1.ptr_[1] * v2.ptr_[2] - v1.ptr_[2] * v2.ptr_[1],
+                    v1.ptr_[2] * v2.ptr_[0] - v1.ptr_[0] * v2.ptr_[2],
+                    v1.ptr_[0] * v2.ptr_[1] - v1.ptr_[1] * v2.ptr_[0], 
+                    0));
+        }
     }
     
     {
@@ -531,8 +588,6 @@ void main(string[] args)
     //TODO: toFloat, toDouble, toInt for cases when the argument and the 
     // result do not have the same number of elements.
     
-    //TODO: dot products, cross products, norms, magnitudes
-
     //TODO: sqrtEst, rsqrtEst, magEst, normEst
             
     // TODO: shift, rotate bytes, elements
