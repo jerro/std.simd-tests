@@ -5,6 +5,18 @@ import core.simd;
 
 alias TypeTuple tt;
 
+template isVector(T)
+{
+    static if(is(T == double2) || is(T == float4) ||
+            is(T == long2) || is(T == ulong2) ||
+            is(T == int4) || is(T == uint4) ||
+            is(T == short8) || is(T == ushort8) ||
+            is(T == byte16) || is(T == ubyte16) || is(T == void16))
+        enum bool isVector = true;
+    else
+        enum bool isVector = false;
+}
+
 template PromotionOf(T)
 {
     static if(is(T == int4))
@@ -79,7 +91,7 @@ auto repeated(V)(BaseType!V a)
     return r;
 }
 
-auto eq(bool approx = false, T)(T a, T b) if(isIntegral!T)
+auto eq(bool approx = false, T)(T a, T b) if(isIntegral!T || is(T == bool))
 {
     return a == b;
 }
@@ -92,15 +104,29 @@ auto eq(bool approx = false, T)(T a, T b) if(isFloatingPoint!T)
     return feqrel(a, b) + 3 >= (approx ? T.mant_dig / 2 : T.mant_dig);
 }
 
-auto eq(bool approx = false, V)(V a, V b) if(!isFloatingPoint!V && !isIntegral!V)
+auto eq(bool approx = false, V)(V a, V b) if(isVector!V)
 {
-    alias typeof(a.array[0]) T;
+    alias typeof(b.array[0]) T;
 
     foreach(i; staticIota!(0, V.init.length))
         if(!eq!approx(a.array[i], b.array[i]))
             return false;
 
     return true;
+}
+
+/*auto eq(bool approx = false, V, V1)(V a, V1 bb) 
+    if(isVector!V && isImplicitlyConvertible!(V1, V) && !is(V == V1))
+{
+    V b = bb;
+    return eq(a, b);
+}*/
+
+auto eq(bool approx = false, V, V1)(V1 aa, V b) 
+    if(isVector!V && isImplicitlyConvertible!(V1, V) && !is(V == V1))
+{
+    V a = aa;
+    return eq(a, a);
 }
 
 template getString(a...)
@@ -360,7 +386,9 @@ void main(string[] args)
             rcp, a => cast(typeof(a)) 1 / a,
             rcpEst, a => cast(typeof(a)) 1 / a,
             rsqrt, a => cast(typeof(a)) 1 / std.math.sqrt(a),
-            std.simd.sqrt, std.math.sqrt),
+            std.simd.sqrt, std.math.sqrt,
+            rsqrtEst, a => cast(typeof(a)) 1 / std.math.sqrt(a),
+            std.simd.sqrtEst, std.math.sqrt),
         true, SIMDVer.SSE42, 16, floatingPoint)();
 
     // unary operations
@@ -422,7 +450,7 @@ void main(string[] args)
         alias staticIota!(1, n + 1) seq;
         
         Vector!(ubyte[V.sizeof]) mask;
-        V v, v1, v2; 
+        V v, v1, v2, v3; 
         V ones = 1;
         V zeros = 0;
         V correct;
@@ -562,11 +590,15 @@ void main(string[] args)
                 test!(magnitude3, true)(v1, repeated!V(
                     std.math.sqrt(magSq(v1.ptr_[0 .. 3]))));
                 
+                test!(magEst3, true)(v1, repeated!V(
+                    std.math.sqrt(magSq(v1.ptr_[0 .. 3]))));
+                
                 test!(magSq3)(v1, repeated!V(magSq(v1.ptr_[0 .. 3])));
 
                 correct = v1;
                 correct /= std.math.sqrt(magSq(v1.ptr_[0 .. 3]));
                 test!(normalise3, true)(v1, correct);
+                test!(normEst3, true)(v1, correct);
             }
 
             static if(n >= 4)
@@ -575,11 +607,15 @@ void main(string[] args)
                 test!(magnitude4, true)(v1, repeated!V(
                     std.math.sqrt(magSq(v1.ptr_[0 .. 4]))));
                 
+                test!(magEst4, true)(v1, repeated!V(
+                    std.math.sqrt(magSq(v1.ptr_[0 .. 4]))));
+                
                 test!(magSq4)(v1, repeated!V(magSq(v1.ptr_[0 .. 4])));
 
                 correct = v1;
                 correct /= std.math.sqrt(magSq(v1.ptr_[0 .. 4]));
                 test!(normalise4, true)(v1, correct);
+                test!(normEst4, true)(v1, correct);
             }
             
             static if(n == 4)
@@ -589,6 +625,86 @@ void main(string[] args)
                     v1.ptr_[0] * v2.ptr_[1] - v1.ptr_[1] * v2.ptr_[0], 
                     0));
         }
+
+        alias staticIota!(1, vecBytes + 1) bseq;   
+        v = cast(V) vector!ubyte(bseq);
+
+        correct = cast(V) vector!ubyte(bseq[1 .. $], 0);
+        test!(shiftBytesLeftImmediate, false, 1, SIMDVer.SSE42)(v, correct); 
+        
+        correct = cast(V) vector!ubyte(bseq[1 .. $], 1);
+        test!(rotateBytesLeftImmediate, false, 1, SIMDVer.SSE42)(v, correct);
+
+        correct = cast(V) vector!ubyte(0, bseq[0 .. $ - 1]);
+        test!(shiftBytesRightImmediate, false, 1, SIMDVer.SSE42)(v, correct); 
+        
+        correct = cast(V) vector!ubyte(vecBytes, bseq[0 .. $ - 1]);
+        test!(rotateBytesRightImmediate, false, 1, SIMDVer.SSE42)(v, correct);
+
+        v = vector!T(seq);
+        
+        correct = vector!T(seq[1 .. $], 0);
+        test!(shiftElementsLeft, false, 1, SIMDVer.SSE42)(v, correct); 
+        
+        correct = vector!T(seq[1 .. $], 1);
+        test!(rotateElementsLeft, false, 1, SIMDVer.SSE42)(v, correct);
+
+        correct = vector!T(0, seq[0 .. $ - 1]);
+        test!(shiftElementsRight, false, 1, SIMDVer.SSE42)(v, correct); 
+        
+        correct = vector!T(n, seq[0 .. $ - 1]);
+        test!(rotateElementsRight, false, 1, SIMDVer.SSE42)(v, correct);
+
+        {
+            alias staticIota!(1, 2 * n + 1) both;
+            v1 = vector!T(both[0 .. n]);
+            v2 = vector!T(both[n .. $]);
+    
+            correct = vector!T(both[1 .. n + 1]);
+            test!(shiftElementsLeftPair, false, 1, SIMDVer.SSE42)(v1, v2, correct); 
+            
+            correct = vector!T(both[n - 1 .. $ - 1]);
+            test!(shiftElementsRightPair, false, 1, SIMDVer.SSE42)(v2, v1, correct); 
+        }
+
+        v1 = vector!T(seq);
+        v2 = v1;
+        v2.ptr_[0] = 2; 
+        
+        mask = ubyte.max;
+        mask.ptr_[0 .. T.sizeof] = 0;
+        test!maskEqual(v1, v2, mask);
+
+        mask = 0;
+        mask.ptr_[0 .. T.sizeof] = ubyte.max; 
+        test!maskNotEqual(v1, v2, mask);
+    
+        mask = 0;
+        mask.ptr_[0 .. T.sizeof] = ubyte.max;
+        test!maskGreater(v2, v1, mask);
+
+        mask = ubyte.max;
+        mask.ptr_[0 .. T.sizeof] = 0;
+        test!maskGreaterEqual(v1, v2, mask);
+
+        mask = 0;
+        mask.ptr_[0 .. T.sizeof] = ubyte.max;
+        test!maskLess(v1, v2, mask);
+
+        mask = ubyte.max;
+        mask.ptr_[0 .. T.sizeof] = 0;
+        test!maskLessEqual(v2, v1, mask);
+    
+        version(none) // not implemented yet
+        {
+            v3 = vector!T(staticIota!(2, 2 + n));
+            
+            test!allEqual(v1, v1, true);
+            test!allEqual(v1, v2, false);
+            test!allNotEqual(v1, v3, true);
+            test!allNotEqual(v1, v2, false);
+        }
+         
     }
     
     {
@@ -598,17 +714,6 @@ void main(string[] args)
         test!permute(v, mask, mask);
     }
 
-    /*ubyte16 vv;
-    swizzle!("1772055017720550", SIMDVer.SSE42)(vv);*/
-
     //TODO: toFloat, toDouble, toInt for cases when the argument and the 
     // result do not have the same number of elements.
-    
-    //TODO: sqrtEst, rsqrtEst, magEst, normEst
-            
-    // TODO: shift, rotate bytes, elements
-
-    // TODO: allEqual, alNotEqual ...
-
-    // TODO: maskEqual, maskNotEqual ...
 }
