@@ -405,8 +405,6 @@ void main(string[] args)
         group!(
             add, (a, b) => a + b,
             sub, (a, b) => a - b,
-            addSaturate, opSaturate!"+",
-            subSaturate, opSaturate!"-",
             mul, (a, b) => a * b,
             div, (a, b) => a / b,
             divEst, (a, b) => a / b,
@@ -419,6 +417,15 @@ void main(string[] args)
             andNot, (a, b) => (a.intBitcast & ~b.intBitcast).bitcast!(typeof(a)),
             xor, (a, b) => (a.intBitcast ^ b.intBitcast).bitcast!(typeof(a))))();
  
+    // integral binary operations (onlys supported for byte16, ubyte16,
+    // short8 and ushort8 on x86):
+    testElementWise!(
+        group!(a => a + 2, a => 2 * a + 1), 
+        group!(
+            addSaturate, opSaturate!"+",
+            subSaturate, opSaturate!"-"),
+        false, SIMDVer.SSE42, 16, tt!(byte, ubyte, short, ushort))();
+
     // three operand operations:
     testElementWise!(
         group!(a => a + 2, a => 2 * a + 1, a => 3 - a),
@@ -534,8 +541,11 @@ void main(string[] args)
             vp2 = vector!P(staticIota!(n / 2, n));
             test!unpackLow(v, vp1); 
             test!unpackHigh(v, vp2);
-            test!pack(vp1, vp2, v); 
-            test!packSaturate(vp1, vp2, v); // TODO: check that it saturates
+            test!pack(vp1, vp2, v);
+            // Does not make sense for floating point and only works with
+            // vectors with 16 bit or 8 bit elements on x86.
+            static if(isIntegral!T && T.sizeof <= 2)
+                test!packSaturate(vp1, vp2, v); // TODO: check that it saturates
         }
 
         static if(n == 4)
