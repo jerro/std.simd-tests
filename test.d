@@ -142,6 +142,8 @@ template getString(a...)
     {
         static if(is(typeof(a[0]) == string))
             enum getString = `"` ~ a[0] ~ `" ` ~ getString!(a[1 .. $]);
+        else static if(is(typeof(a[0]) == enum))
+            enum getString = to!string(a[0]);
         else
             enum getString = a[0].stringof ~ " " ~ getString!(a[1 .. $]);
     }
@@ -157,8 +159,14 @@ void print(T)(File f, T a)
 
 template group(a...){ alias a members; }
 
-alias tt!(byte, ubyte, short, ushort, int, uint, long, ulong) integral;
+alias tt!(byte, ubyte, short, ushort, int, uint, long, ulong) allIntegral;
 alias tt!(float, double) floatingPoint;
+
+version(DigitalMars)
+    // we need to avoid internal compiler errors
+    alias tt!(int, uint, long, ulong) integral;
+else
+    alias allIntegral integral;
 
 bool listSymbols = false;
 
@@ -450,7 +458,7 @@ void main(string[] args)
 
     enum vecBytes = 16;
 
-    foreach(T; tt!(floatingPoint, integral))
+    foreach(T; tt!(floatingPoint, allIntegral))
     {
         enum n = vecBytes / T.sizeof; 
         alias Vector!(T[n]) V;       
@@ -714,7 +722,6 @@ void main(string[] args)
             test!allNotEqual(v1, v3, true);
             test!allNotEqual(v1, v2, false);
         }
-         
     }
     
     {
