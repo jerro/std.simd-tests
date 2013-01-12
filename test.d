@@ -114,7 +114,7 @@ auto eq(bool approx = false, V)(V a, V b) if(isVector!V)
     alias typeof(b.array[0]) T;
 
     foreach(i; staticIota!(0, V.init.length))
-        if(!eq!approx(a.array[i], b.array[i]))
+        if(!eq!approx(a.ptr_[i], b.ptr_[i]))
             return false;
 
     return true;
@@ -267,7 +267,7 @@ void testElementWise(
             {
                 staticRepeat!(nParams, T) scalarParams;
                 foreach(k, _2; scalarParams)
-                    scalarParams[k] = params[k].array[j];
+                    scalarParams[k] = params[k].ptr_[j];
                
                 (cast(T*) &correct)[j] = cast(T)ops[i + 1](scalarParams);
             }
@@ -344,7 +344,7 @@ auto simpleSwizzle(V)(string ind, V v)
 {
     V r;
     foreach(i, char c; ind)
-        r.ptr_[i] = v.array["0123456789ABCDEF".countUntil(c)]; 
+        r.ptr_[i] = v.ptr_["0123456789ABCDEF".countUntil(c)]; 
     
     return r;
 }
@@ -579,7 +579,7 @@ void main(string[] args)
         v1 = vector!T(staticIota!(50, 50 + n));
         v2 = vector!T(seq);
         correct = v2;
-        correct.ptr_[0] = v1.array[0];
+        correct.ptr_[0] = v1.ptr_[0];
         test!(std.simd.select)(mask, v1, v2, correct);
         
         //TODO: selectEqual, selectNotEqual...
