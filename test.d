@@ -84,10 +84,15 @@ auto vector(T, A...)(A a)
     return r;
 }
 
+@property ptr_(V)(ref V v)
+{
+    return cast(BaseType!(V)*) &v;
+}
+
 auto repeated(V)(BaseType!V a)
 {
     V r;
-    r = a;
+    r.ptr_[0 .. nElements!V] = a;
     return r;
 }
 
@@ -333,11 +338,6 @@ template swizzleStrings(int nElements, int maxNStrings)
     }
     
     mixin(f);
-}
-
-@property ptr_(V)(ref V v)
-{
-    return cast(BaseType!(V)*) &v;
 }
 
 auto simpleSwizzle(V)(string ind, V v)
@@ -606,7 +606,7 @@ void main(string[] args)
                 test!(magSq3)(v1, repeated!V(magSq(v1.ptr_[0 .. 3])));
 
                 correct = v1;
-                correct /= std.math.sqrt(magSq(v1.ptr_[0 .. 3]));
+                correct /= repeated!V(std.math.sqrt(magSq(v1.ptr_[0 .. 3])));
                 test!(normalise3, true)(v1, correct);
                 test!(normEst3, true)(v1, correct);
             }
@@ -623,7 +623,7 @@ void main(string[] args)
                 test!(magSq4)(v1, repeated!V(magSq(v1.ptr_[0 .. 4])));
 
                 correct = v1;
-                correct /= std.math.sqrt(magSq(v1.ptr_[0 .. 4]));
+                correct /= repeated!V(std.math.sqrt(magSq(v1.ptr_[0 .. 4])));
                 test!(normalise4, true)(v1, correct);
                 test!(normEst4, true)(v1, correct);
             }
